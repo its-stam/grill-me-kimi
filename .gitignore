@@ -1,0 +1,11 @@
+# Plan artifacts produced by the skills (belong to the consuming repo, not this one)
+PLAN.md
+PLAN-REVIEW-LOG.md
+
+# OS / editor cruft
+.DS_Store
+*.swp
+
+# ruflo / claude-flow runtime artifacts
+.claude-flow/
+.swarm/
