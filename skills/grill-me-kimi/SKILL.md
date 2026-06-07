@@ -58,6 +58,12 @@ short header and the locked plan's date.
 Show the user the locked `PLAN.md` in one or two sentences and confirm they want to
 start the Kimi review. Do not proceed without a yes.
 
+**Thinking mode (Kimi's reasoning depth).** The engine reads `~/.kimi-grill/thinking`
+(`on`/`off`, default `on`). If that file doesn't exist yet, offer a one-time arrow pick —
+**ON** (deeper, slower) vs **OFF** (faster) — and write the chosen word to it. Otherwise
+note the current mode in one line. The user can re-pick anytime by asking;
+`KIMI_NO_THINKING=1` overrides a single run.
+
 ### The loop
 
 `MAX_ROUNDS = 5` (override if the user asks). The review engine is bundled with

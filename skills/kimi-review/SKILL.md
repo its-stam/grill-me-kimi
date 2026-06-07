@@ -34,6 +34,11 @@ one first. Start (or append to) `PLAN-REVIEW-LOG.md` for the audit trail.
 
 Confirm the user wants to start the Kimi review of `<plan-file>`. No yes, no proceed.
 
+**Thinking mode.** The engine reads `~/.kimi-grill/thinking` (`on`/`off`, default `on`).
+If the file doesn't exist yet, offer a one-time pick — **ON** (deeper, slower) vs **OFF**
+(faster) — and write the word to it. Otherwise note the current mode. `KIMI_NO_THINKING=1`
+overrides one run.
+
 ## The loop
 
 `MAX_ROUNDS = 5` (override on request). Engine bundled at

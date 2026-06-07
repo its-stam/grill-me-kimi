@@ -19,19 +19,23 @@ REPO_DIR="$(pwd)"
 ROUND=1
 MAX_ROUNDS=5
 TIMEOUT_SECS="${KIMI_REVIEW_TIMEOUT:-420}"
+MODE="plan"            # plan = review an implementation plan | code = review a diff
 
 usage() {
   cat >&2 <<'EOF'
-Usage: kimi-review.sh [--plan-file PATH] [--repo DIR] [--round N] [--max-rounds N] [--timeout SECS]
+Usage: kimi-review.sh [--mode plan|code] [--plan-file PATH] [--repo DIR] [--round N] [--max-rounds N] [--timeout SECS]
 
-  --plan-file PATH   Plan to review (default: PLAN.md)
-  --repo DIR         Working directory Kimi reads (default: current dir)
+  --mode plan|code   plan: review an implementation plan (default).
+                     code: review a code diff (the file is a unified diff).
+  --plan-file PATH   File to review: a plan (plan mode) or a diff (code mode).
+                     Alias: --diff-file. Default: PLAN.md
+  --repo DIR         Working directory Kimi reads for context (default: current dir)
   --round N          Review round (default: 1). N>=2 resumes the same session.
   --max-rounds N     Cap, for the prompt only (default: 5)
   --timeout SECS     Kill the call after this many seconds (default: 420)
 
 Env overrides:
-  KIMI_MODEL         Pin a model (default: your OAuth plan's default)
+  KIMI_MODEL         Pin a model (default: the config's default_model)
   KIMI_NO_THINKING=1 Disable thinking mode (default: thinking on)
   KIMI_REVIEW_TIMEOUT  Same as --timeout
 EOF
@@ -39,7 +43,8 @@ EOF
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --plan-file) PLAN_FILE="${2:?}"; shift 2 ;;
+    --mode)      MODE="${2:?}"; shift 2 ;;
+    --plan-file|--diff-file) PLAN_FILE="${2:?}"; shift 2 ;;
     --repo)      REPO_DIR="${2:?}"; shift 2 ;;
     --round)     ROUND="${2:?}"; shift 2 ;;
     --max-rounds) MAX_ROUNDS="${2:?}"; shift 2 ;;
@@ -48,6 +53,8 @@ while [ $# -gt 0 ]; do
     *) echo "ERROR: unknown arg: $1" >&2; usage; exit 2 ;;
   esac
 done
+
+case "$MODE" in plan|code) ;; *) echo "ERROR: --mode must be plan or code" >&2; exit 2 ;; esac
 
 # --- Preflight ---------------------------------------------------------------
 command -v kimi >/dev/null 2>&1 || {
@@ -66,12 +73,13 @@ fi
   echo "ERROR: not logged in to Kimi ($SHARE). Run once:  kimi login" >&2; exit 4; }
 
 [ -f "$PLAN_FILE" ] || {
-  echo "ERROR: plan file not found: $PLAN_FILE" >&2; exit 5; }
+  echo "ERROR: input file not found: $PLAN_FILE" >&2; exit 5; }
 
 # --- Review prompt -----------------------------------------------------------
 # Read-only adversarial reviewer. Substance over nitpicks. Hard output contract:
-# numbered concerns with severity, then exactly one VERDICT line.
-read -r -d '' RULES <<'EOF' || true
+# numbered findings with severity, then exactly one VERDICT line.
+if [ "$MODE" = "plan" ]; then
+  read -r -d '' RULES <<'EOF' || true
 You are a senior software architect doing an ADVERSARIAL, read-only review of an
 implementation plan BEFORE any code is written. You are NOT the author. Assume the
 plan is flawed and find the flaws. This is read-only: do NOT modify, create, or
@@ -95,13 +103,13 @@ Output format, exactly:
    VERDICT: CHANGES_REQUESTED
 EOF
 
-if [ "$ROUND" -le 1 ]; then
-  PROMPT="$RULES
+  if [ "$ROUND" -le 1 ]; then
+    PROMPT="$RULES
 
 Review the plan at: $PLAN_FILE
 Read it in full, then read the parts of the codebase it touches before judging."
-else
-  PROMPT="$RULES
+  else
+    PROMPT="$RULES
 
 This is review round $ROUND of at most $MAX_ROUNDS. Earlier in THIS session you
 reviewed a previous version of $PLAN_FILE. The author has revised it to address
@@ -113,6 +121,62 @@ For EVERY concern you raised in a previous round, state one of:
   NOT ADDRESSED — what is missing
 Then raise any NEW concern the revision introduced. Keep the same severity
 prefixes and end with the single VERDICT line."
+  fi
+else
+  # code mode: embed the diff so work-dir scoping can never hide it; the full files
+  # live in the repo (Kimi's work dir) and it reads them for context.
+  DIFF_CONTENT="$(cat "$PLAN_FILE")"
+  read -r -d '' RULES <<'EOF' || true
+You are a senior engineer doing an ADVERSARIAL, read-only review of a CODE CHANGE
+before it merges. You are NOT the author. Assume there are bugs and find them. This
+is read-only: do NOT modify, create, or delete any file. The unified diff under
+review is given below; the full files are in your working directory — read them for
+context before judging.
+
+Judge on substance, not style:
+- Correctness bugs: off-by-one, wrong conditions, null/nil, type/encoding, async/await.
+- Unhandled edge cases and error paths (empty/huge input, failures, timeouts, retries).
+- Security: injection, authz/authn gaps, unsafe input, secrets, path traversal, SSRF.
+- Concurrency: races, deadlocks, non-atomic read-modify-write.
+- Resource leaks, unbounded growth, N+1 queries.
+- Breaking changes to public APIs/contracts; missing migrations.
+- Behavior changed with no matching test.
+- A simpler or safer way to get the same result.
+
+Read whatever files you need first, then produce the COMPLETE review as your final
+answer — written out in full, not a summary, and not a reference to earlier messages.
+
+Output format, exactly:
+1. A numbered list of findings. Prefix each with a severity:
+   [BLOCKER] must fix before merge, [MAJOR] likely to bite, [MINOR] worth noting.
+   Reference the file and line or hunk for each.
+2. Then a single final line, nothing after it:
+   VERDICT: APPROVED        (only if there are no BLOCKER or MAJOR findings left)
+   VERDICT: CHANGES_REQUESTED
+EOF
+
+  if [ "$ROUND" -le 1 ]; then
+    PROMPT="$RULES
+
+DIFF UNDER REVIEW:
+$DIFF_CONTENT"
+  else
+    PROMPT="$RULES
+
+This is review round $ROUND of at most $MAX_ROUNDS. Earlier in THIS session you
+reviewed an earlier version of this change. It has been revised. Re-read the new
+diff below and the affected files.
+
+For EVERY finding you raised in a previous round, state one of:
+  ADDRESSED — and why you're satisfied
+  PARTIALLY — what still falls short
+  NOT ADDRESSED — what is missing
+Then raise any NEW finding the revision introduced. Keep the same severity prefixes
+and end with the single VERDICT line.
+
+REVISED DIFF UNDER REVIEW:
+$DIFF_CONTENT"
+  fi
 fi
 
 # --- Build argv --------------------------------------------------------------
@@ -125,6 +189,15 @@ fi
 # "tool_use" from a newer Kimi Code), feed a sanitized copy via --config-file while
 # still reading OAuth creds from $SHARE. The model comes from the config's
 # default_model; override only with KIMI_MODEL.
+# Thinking mode: KIMI_NO_THINKING env wins, else the persisted toggle
+# (~/.kimi-grill/thinking = "on"|"off"), else on. The review skills flip the file
+# via an on/off picker; this is what they read back.
+THINKING="on"
+[ -f "$HOME/.kimi-grill/thinking" ] && case "$(tr -d '[:space:]' < "$HOME/.kimi-grill/thinking" 2>/dev/null)" in
+  off|OFF|0|false) THINKING="off" ;;
+esac
+[ -n "${KIMI_NO_THINKING:-}" ] && THINKING="off"
+
 ENV_PREFIX=()
 CFG_ARG=()
 if [ "$SHARE" != "$HOME/.kimi" ]; then
@@ -144,7 +217,7 @@ KIMI_CMD+=(kimi --quiet --plan --work-dir "$REPO_DIR")
 [ ${#CFG_ARG[@]} -gt 0 ] && KIMI_CMD+=("${CFG_ARG[@]}")
 [ "$ROUND" -ge 2 ] && KIMI_CMD+=(--continue)             # resume the same session
 [ -n "${KIMI_MODEL:-}" ] && KIMI_CMD+=(-m "$KIMI_MODEL") # else config default_model
-[ -z "${KIMI_NO_THINKING:-}" ] && KIMI_CMD+=(--thinking) # deeper review by default
+[ "$THINKING" = "on" ] && KIMI_CMD+=(--thinking)        # env > ~/.kimi-grill/thinking > on
 KIMI_CMD+=(--prompt "$PROMPT")
 
 # --- Run helpers -------------------------------------------------------------
@@ -188,7 +261,7 @@ if [ -n "$API_KEY" ]; then
 
   API_CMD=(kimi --quiet --plan --work-dir "$REPO_DIR")
   [ "$ROUND" -ge 2 ] && API_CMD+=(--continue)              # session memory within API mode
-  [ -z "${KIMI_NO_THINKING:-}" ] && API_CMD+=(--thinking)
+  [ "$THINKING" = "on" ] && API_CMD+=(--thinking)
   API_CMD+=(--prompt "$PROMPT")
 
   # Key passed via the env of this call (not argv) so it never lands in `ps aux`.

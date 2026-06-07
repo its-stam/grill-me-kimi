@@ -29,6 +29,11 @@ Two artifacts come out: `PLAN.md` (the clean final plan — the *what*) and
 | `grill-with-docs-kimi` | Same, but challenges your plan against your project's `CONTEXT.md` glossary + writes ADRs inline | Kimi review loop |
 | `kimi-review` | — (you already have a plan) | Kimi review loop |
 
+Plus **`kimi-code-review`** — a critical second pair of eyes on a **code diff** (not a
+plan), from a different model. Like a Codex review, but on Kimi (OAuth, no API key).
+Reviews uncommitted changes, a branch, or a PR read-only and returns severity-tagged
+findings + a verdict.
+
 ## How Act 2 works
 
 1. Claude writes the locked plan to `PLAN.md` and starts a log at `PLAN-REVIEW-LOG.md`.
@@ -131,6 +136,14 @@ The fallback uses the Moonshot API by default (same Kimi model family). It kicks
 when any of `GRILL_KIMI_API_KEY`, `MOONSHOT_API_KEY`, or `KIMI_API_KEY` is set. If you
 don't set one, there's no fallback and you just get the `kimi login` prompt.
 
+## Thinking mode (Kimi's reasoning depth)
+
+Kimi has a binary thinking mode (there's no graded low/medium/high effort dial). The
+review skills offer a one-time **ON / OFF** pick at kickoff — ON is deeper and slower,
+OFF is faster — and remember it in `~/.kimi-grill/thinking`. Set once, navigate with
+the arrow keys, done. Re-pick anytime by asking. Precedence:
+`KIMI_NO_THINKING=1` (per run) > `~/.kimi-grill/thinking` (`on`/`off`) > on (default).
+
 ## Configuration
 
 | Env var | Default | Effect |
@@ -144,6 +157,20 @@ don't set one, there's no fallback and you just get the `kimi login` prompt.
 | `GRILL_KIMI_MODEL` | `kimi-k2.6` | API fallback model |
 
 `MAX_ROUNDS` is passed per-invocation (`--max-rounds N`); the skills default to 5.
+
+## Updating Kimi
+
+Three layers, three answers:
+
+- **The model** — mostly automatic. The skills don't pin a model; they use the
+  config's `default_model` (`kimi-for-coding`), a *role alias* that Moonshot maps
+  server-side to its current coding model. New/better models usually arrive with no
+  action. To pin a specific one, set `KIMI_MODEL=<alias>` (no code change).
+- **The CLI** — manual: `brew upgrade kimi-cli` (or the code.kimi.com installer). New
+  versions add models, flags, and capabilities. (An older CLI is also why the engine
+  sanitizes the config — see *Two wrinkles* above; upgrading eventually removes the need.)
+- **These skills** — nothing to do. They're model-agnostic, so a new Kimi version
+  (2.7, 3.0, …) needs no change here.
 
 ## The engine
 

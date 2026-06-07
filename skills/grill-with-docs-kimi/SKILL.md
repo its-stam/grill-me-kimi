@@ -80,6 +80,11 @@ Identical to `grill-me-kimi`. The bundled engine is at
 ### Gate 1 — kickoff
 Show the locked `PLAN.md` briefly; confirm the user wants the Kimi review. No yes, no proceed.
 
+**Thinking mode.** The engine reads `~/.kimi-grill/thinking` (`on`/`off`, default `on`).
+If the file doesn't exist yet, offer a one-time pick — **ON** (deeper, slower) vs **OFF**
+(faster) — and write the word to it. Otherwise note the current mode. `KIMI_NO_THINKING=1`
+overrides one run.
+
 ### The loop (`MAX_ROUNDS = 5`)
 For each round `N` from 1:
 
