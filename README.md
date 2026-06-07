@@ -75,21 +75,51 @@ chmod +x ~/.claude/skills/*/kimi-review.sh
 
 Then in Claude Code: `/grill-me-kimi`, `/grill-with-docs-kimi`, or `/kimi-review`.
 
-## Auth, in practice
+## Authentication — login, and re-login when it expires
 
-The engine shells out to `kimi`, so it uses whatever account you logged into with
-`kimi login` — pure OAuth subscription, no API key. Two wrinkles it handles for you:
+The engine shells out to `kimi`, so it uses whatever account you logged into. Pure
+**OAuth subscription, no API key**. No secret is ever stored in this repo or in the
+skill — `kimi` reads your credentials from its own data dir (outside the repo).
+
+**First time:**
+```bash
+kimi login              # OAuth device flow: opens a URL, sign in with your Kimi account
+```
+
+**Token lifetime.** The short-lived access token (~15 min) is refreshed silently in
+the background by a longer-lived refresh token — you won't notice. Only when the
+refresh token itself expires (days/weeks) does a review start failing.
+
+**Re-login when it expires.** If a review prints `LLM not set` or a `401`:
+```bash
+kimi login              # same command, redoes the OAuth flow; the skill picks it up automatically
+```
+
+**Quick health check** (no real plan needed):
+```bash
+printf '# test\n' > /tmp/p.md && ~/.claude/skills/grill-me-kimi/kimi-review.sh --plan-file /tmp/p.md
+```
+A review back = auth is good. `LLM not set` (exit 6) = re-login. On failure the engine
+also prints which data dir it read, so you can see where to re-auth.
+
+### Two wrinkles the engine handles for you
 
 - **Where creds live.** A plain install keeps them in `~/.kimi`; a migrated "Kimi
   Code" install keeps them in `~/.kimi-code`. The engine auto-detects `~/.kimi-code`
-  and points the CLI at it via `KIMI_SHARE_DIR`. Override with `KIMI_SHARE_DIR=...`.
-- **Config skew.** Newer Kimi Code configs can carry capability values (e.g.
-  `tool_use`) that an older `kimi` build rejects. The engine writes a sanitized copy
-  to `~/.kimi-grill/config.toml` and passes it via `--config-file`, leaving your real
+  and points the CLI at it via `KIMI_SHARE_DIR`. If `kimi login` ever writes somewhere
+  else, force it: `KIMI_SHARE_DIR=<that dir> kimi-review.sh ...`.
+- **Config skew.** Newer Kimi Code configs carry capability values (e.g. `tool_use`)
+  that an older `kimi` build rejects. The engine writes a sanitized copy to
+  `~/.kimi-grill/config.toml` and passes it via `--config-file`, leaving your real
   config untouched. The model comes from that config's `default_model`
   (`kimi-for-coding` on the coding plan) — you don't pass `-m`.
 
-If a round prints `LLM not set`, your login expired: run `kimi login` again.
+## Use a different model (DeepSeek, Qwen, Ollama, ...)
+
+`kimi` is a generic agent harness, so you can run the exact same review loop with a
+different model — DeepSeek, Qwen, a local Ollama model, the Moonshot API, Gemini. For
+any OpenAI-compatible model it's config-only, no code change. Full recipes in
+**[docs/PROVIDERS.md](./docs/PROVIDERS.md)**.
 
 ## Configuration
 
