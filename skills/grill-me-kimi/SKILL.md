@@ -115,8 +115,10 @@ reads, reviews, and edits the two plan files.
   no per-token billing. First-time setup: `brew install kimi-cli && kimi login`.
 - **Read-only safety:** Kimi runs in `--plan` mode scoped to the repo; it cannot
   modify files. It reads `PLAN.md` and the codebase, nothing more.
-- **Model:** defaults to your OAuth plan's model. Pin one with `KIMI_MODEL=...`
-  (e.g. `kimi-k2.6`). Disable thinking with `KIMI_NO_THINKING=1`.
+- **Model & creds:** the engine auto-detects your Kimi data dir (`~/.kimi-code` or
+  `~/.kimi`) and uses that config's `default_model` (`kimi-for-coding` on the coding
+  plan) — no `-m` needed. Override with `KIMI_MODEL=...`. Disable thinking with
+  `KIMI_NO_THINKING=1`. See the repo README for the auth details.
 - **If the script errors:** exit 3 = install the CLI, exit 4 = run `kimi login`,
   exit 124 = timeout (raise `--timeout` or `KIMI_REVIEW_TIMEOUT`).
 

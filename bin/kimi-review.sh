@@ -53,8 +53,17 @@ done
 command -v kimi >/dev/null 2>&1 || {
   echo "ERROR: kimi CLI not found. Install it:  brew install kimi-cli" >&2; exit 3; }
 
-[ -f "$HOME/.kimi/credentials/kimi-code.json" ] || {
-  echo "ERROR: not logged in to Kimi. Run once:  kimi login" >&2; exit 4; }
+# Resolve the Kimi data dir. A migrated "Kimi Code" install keeps its config and
+# OAuth credentials in ~/.kimi-code; a plain install uses ~/.kimi. Honor an
+# explicit KIMI_SHARE_DIR, else prefer ~/.kimi-code when present.
+SHARE="${KIMI_SHARE_DIR:-}"
+if [ -z "$SHARE" ]; then
+  if [ -f "$HOME/.kimi-code/config.toml" ]; then SHARE="$HOME/.kimi-code"
+  else SHARE="$HOME/.kimi"; fi
+fi
+
+[ -f "$SHARE/credentials/kimi-code.json" ] || {
+  echo "ERROR: not logged in to Kimi ($SHARE). Run once:  kimi login" >&2; exit 4; }
 
 [ -f "$PLAN_FILE" ] || {
   echo "ERROR: plan file not found: $PLAN_FILE" >&2; exit 5; }
@@ -112,17 +121,29 @@ fi
 # --work-dir  = scope Kimi to the repo
 # Built incrementally so it stays safe under `set -u` on bash 3.2 (macOS), where
 # expanding an empty array errors with "unbound variable".
-# Model: env override > config default_model > kimi-k2.6 fallback. The Kimi OAuth
-# config often ships no default model, so relying on it gives "LLM not set".
-RESOLVED_MODEL="${KIMI_MODEL:-}"
-if [ -z "$RESOLVED_MODEL" ]; then
-  RESOLVED_MODEL="$(grep -E '^[[:space:]]*default_model' "$HOME/.kimi/config.toml" 2>/dev/null | head -1 | cut -d'"' -f2)"
+# If the resolved config carries capability values this kimi build rejects (e.g.
+# "tool_use" from a newer Kimi Code), feed a sanitized copy via --config-file while
+# still reading OAuth creds from $SHARE. The model comes from the config's
+# default_model; override only with KIMI_MODEL.
+ENV_PREFIX=()
+CFG_ARG=()
+if [ "$SHARE" != "$HOME/.kimi" ]; then
+  ENV_PREFIX=(env "KIMI_SHARE_DIR=$SHARE")
 fi
-[ -z "$RESOLVED_MODEL" ] && RESOLVED_MODEL="kimi-k2.6"
+if [ -f "$SHARE/config.toml" ]; then
+  SAN="$HOME/.kimi-grill/config.toml"
+  mkdir -p "$HOME/.kimi-grill"
+  sed -E 's/,[[:space:]]*"tool_use"//g; s/"tool_use",[[:space:]]*//g' "$SHARE/config.toml" > "$SAN"
+  CFG_ARG=(--config-file "$SAN")
+fi
 
-KIMI_CMD=(kimi --quiet --plan --work-dir "$REPO_DIR")
+# Built incrementally; length-guarded so empty arrays don't trip `set -u` on bash 3.2.
+KIMI_CMD=()
+[ ${#ENV_PREFIX[@]} -gt 0 ] && KIMI_CMD+=("${ENV_PREFIX[@]}")
+KIMI_CMD+=(kimi --quiet --plan --work-dir "$REPO_DIR")
+[ ${#CFG_ARG[@]} -gt 0 ] && KIMI_CMD+=("${CFG_ARG[@]}")
 [ "$ROUND" -ge 2 ] && KIMI_CMD+=(--continue)             # resume the same session
-KIMI_CMD+=(-m "$RESOLVED_MODEL")
+[ -n "${KIMI_MODEL:-}" ] && KIMI_CMD+=(-m "$KIMI_MODEL") # else config default_model
 [ -z "${KIMI_NO_THINKING:-}" ] && KIMI_CMD+=(--thinking) # deeper review by default
 KIMI_CMD+=(--prompt "$PROMPT")
 
@@ -148,7 +169,8 @@ fi
 if [ -z "${OUT//[[:space:]]/}" ] || printf '%s' "$OUT" | grep -q "LLM not set"; then
   echo "ERROR: Kimi produced no review (\"LLM not set\" / empty output)." >&2
   echo "  Most likely your OAuth login expired. Re-login:  kimi login" >&2
-  echo "  Or pin a model your plan supports:  KIMI_MODEL=kimi-k2.6 ./kimi-review.sh ..." >&2
+  echo "  Reading creds/config from: $SHARE" >&2
+  echo "  Or set KIMI_MODEL to a model alias from that config's [models] section." >&2
   exit 6
 fi
 

@@ -75,11 +75,28 @@ chmod +x ~/.claude/skills/*/kimi-review.sh
 
 Then in Claude Code: `/grill-me-kimi`, `/grill-with-docs-kimi`, or `/kimi-review`.
 
+## Auth, in practice
+
+The engine shells out to `kimi`, so it uses whatever account you logged into with
+`kimi login` — pure OAuth subscription, no API key. Two wrinkles it handles for you:
+
+- **Where creds live.** A plain install keeps them in `~/.kimi`; a migrated "Kimi
+  Code" install keeps them in `~/.kimi-code`. The engine auto-detects `~/.kimi-code`
+  and points the CLI at it via `KIMI_SHARE_DIR`. Override with `KIMI_SHARE_DIR=...`.
+- **Config skew.** Newer Kimi Code configs can carry capability values (e.g.
+  `tool_use`) that an older `kimi` build rejects. The engine writes a sanitized copy
+  to `~/.kimi-grill/config.toml` and passes it via `--config-file`, leaving your real
+  config untouched. The model comes from that config's `default_model`
+  (`kimi-for-coding` on the coding plan) — you don't pass `-m`.
+
+If a round prints `LLM not set`, your login expired: run `kimi login` again.
+
 ## Configuration
 
 | Env var | Default | Effect |
 |---|---|---|
-| `KIMI_MODEL` | your OAuth plan's default | Pin a model, e.g. `kimi-k2.6` |
+| `KIMI_SHARE_DIR` | `~/.kimi-code` if present, else `~/.kimi` | Kimi data dir (OAuth creds + config) |
+| `KIMI_MODEL` | the config's `default_model` | Pin a model alias from that config's `[models]` |
 | `KIMI_NO_THINKING` | unset (thinking on) | Set to `1` to disable Kimi's thinking mode |
 | `KIMI_REVIEW_TIMEOUT` | `420` | Seconds before a review round is killed |
 
