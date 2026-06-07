@@ -147,32 +147,70 @@ KIMI_CMD+=(kimi --quiet --plan --work-dir "$REPO_DIR")
 [ -z "${KIMI_NO_THINKING:-}" ] && KIMI_CMD+=(--thinking) # deeper review by default
 KIMI_CMD+=(--prompt "$PROMPT")
 
-# --- Portable timeout --------------------------------------------------------
+# --- Run helpers -------------------------------------------------------------
 TIMER=""
 if command -v timeout >/dev/null 2>&1; then TIMER="timeout"
 elif command -v gtimeout >/dev/null 2>&1; then TIMER="gtimeout"; fi
 
-if [ -n "$TIMER" ]; then
-  OUT="$("$TIMER" "$TIMEOUT_SECS" "${KIMI_CMD[@]}" < /dev/null)"; rc=$?
-else
-  OUT="$("${KIMI_CMD[@]}" < /dev/null)"; rc=$?
+_run() {  # run a command array with the timeout wrapper; stdin closed
+  if [ -n "$TIMER" ]; then "$TIMER" "$TIMEOUT_SECS" "$@" < /dev/null
+  else "$@" < /dev/null; fi
+}
+
+# kimi exits 0 even when it produced no usable review (expired OAuth → "LLM not
+# set", or an API error like a 401/429 quota message). Treat those as failures so
+# the caller never mistakes a setup error for a real review.
+_failed() {
+  [ -z "${1//[[:space:]]/}" ] && return 0
+  printf '%s' "$1" | grep -qE "LLM not set|Error code:|Invalid Authentication|exceeded_current_quota|insufficient balance" && return 0
+  return 1
+}
+
+# --- Primary: OAuth path -----------------------------------------------------
+OUT="$(_run "${KIMI_CMD[@]}")"; rc=$?
+[ "$rc" -eq 124 ] && { echo "ERROR: Kimi review timed out after ${TIMEOUT_SECS}s (round $ROUND)." >&2; exit 124; }
+
+if ! _failed "$OUT"; then
+  printf '%s\n' "$OUT"
+  exit 0
 fi
 
-if [ "$rc" -eq 124 ]; then
-  echo "ERROR: Kimi review timed out after ${TIMEOUT_SECS}s (round $ROUND)." >&2
-  exit 124
-fi
+# --- Fallback: API key (OAuth primary stays first) ---------------------------
+# Only used when the OAuth path produced no review AND a key is available. Uses an
+# OpenAI-compatible endpoint via env overrides (default: Moonshot API = same Kimi
+# model family). Override base/model with GRILL_KIMI_BASE_URL / GRILL_KIMI_MODEL.
+API_KEY="${GRILL_KIMI_API_KEY:-${MOONSHOT_API_KEY:-${KIMI_API_KEY:-}}}"
+if [ -n "$API_KEY" ]; then
+  echo "NOTE: OAuth path produced no review; trying API fallback..." >&2
+  API_BASE="${GRILL_KIMI_BASE_URL:-https://api.moonshot.ai/v1}"
+  API_MODEL="${GRILL_KIMI_MODEL:-kimi-k2.6}"
+  API_STORE="$HOME/.kimi-grill/api-store"; mkdir -p "$API_STORE"
 
-# Kimi exits 0 even with no usable model (expired OAuth, or no model configured),
-# printing only "LLM not set". Catch that and the empty-output case so the caller
-# never mistakes a setup failure for a real review.
-if [ -z "${OUT//[[:space:]]/}" ] || printf '%s' "$OUT" | grep -q "LLM not set"; then
-  echo "ERROR: Kimi produced no review (\"LLM not set\" / empty output)." >&2
-  echo "  Most likely your OAuth login expired. Re-login:  kimi login" >&2
-  echo "  Reading creds/config from: $SHARE" >&2
-  echo "  Or set KIMI_MODEL to a model alias from that config's [models] section." >&2
+  API_CMD=(kimi --quiet --plan --work-dir "$REPO_DIR")
+  [ "$ROUND" -ge 2 ] && API_CMD+=(--continue)              # session memory within API mode
+  [ -z "${KIMI_NO_THINKING:-}" ] && API_CMD+=(--thinking)
+  API_CMD+=(--prompt "$PROMPT")
+
+  # Key passed via the env of this call (not argv) so it never lands in `ps aux`.
+  OUT2="$(KIMI_SHARE_DIR="$API_STORE" KIMI_API_KEY="$API_KEY" \
+          KIMI_BASE_URL="$API_BASE" KIMI_MODEL_NAME="$API_MODEL" \
+          _run "${API_CMD[@]}")"; rc2=$?
+  [ "$rc2" -eq 124 ] && { echo "ERROR: API fallback timed out after ${TIMEOUT_SECS}s." >&2; exit 124; }
+
+  if ! _failed "$OUT2"; then
+    echo "NOTE: OAuth unavailable — used API fallback ($API_BASE, $API_MODEL)." >&2
+    printf '%s\n' "$OUT2"
+    exit 0
+  fi
+
+  echo "ERROR: both OAuth and the API fallback failed (round $ROUND)." >&2
+  echo "  OAuth: expired? re-login with  kimi login  (creds dir: $SHARE)" >&2
+  echo "  API ($API_BASE): $(printf '%s' "$OUT2" | tr '\n' ' ' | cut -c1-200)" >&2
   exit 6
 fi
 
-printf '%s\n' "$OUT"
-exit "$rc"
+# --- No fallback available ---------------------------------------------------
+echo "ERROR: Kimi produced no review (\"LLM not set\" / empty output)." >&2
+echo "  Most likely your OAuth login expired. Re-login:  kimi login   (creds dir: $SHARE)" >&2
+echo "  Or set an API key (MOONSHOT_API_KEY) for the fallback — see docs/PROVIDERS.md." >&2
+exit 6

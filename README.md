@@ -121,6 +121,16 @@ different model — DeepSeek, Qwen, a local Ollama model, the Moonshot API, Gemi
 any OpenAI-compatible model it's config-only, no code change. Full recipes in
 **[docs/PROVIDERS.md](./docs/PROVIDERS.md)**.
 
+## API fallback (OAuth stays primary)
+
+The engine always tries your **OAuth** login first. If — and only if — that produces
+no review (expired login, no model) and an API key is present, it automatically
+retries once via an OpenAI-compatible API. OAuth is never bypassed while it works.
+
+The fallback uses the Moonshot API by default (same Kimi model family). It kicks in
+when any of `GRILL_KIMI_API_KEY`, `MOONSHOT_API_KEY`, or `KIMI_API_KEY` is set. If you
+don't set one, there's no fallback and you just get the `kimi login` prompt.
+
 ## Configuration
 
 | Env var | Default | Effect |
@@ -129,6 +139,9 @@ any OpenAI-compatible model it's config-only, no code change. Full recipes in
 | `KIMI_MODEL` | the config's `default_model` | Pin a model alias from that config's `[models]` |
 | `KIMI_NO_THINKING` | unset (thinking on) | Set to `1` to disable Kimi's thinking mode |
 | `KIMI_REVIEW_TIMEOUT` | `420` | Seconds before a review round is killed |
+| `MOONSHOT_API_KEY` / `GRILL_KIMI_API_KEY` | unset | API key for the fallback (used only if OAuth fails) |
+| `GRILL_KIMI_BASE_URL` | `https://api.moonshot.ai/v1` | API fallback endpoint |
+| `GRILL_KIMI_MODEL` | `kimi-k2.6` | API fallback model |
 
 `MAX_ROUNDS` is passed per-invocation (`--max-rounds N`); the skills default to 5.
 
