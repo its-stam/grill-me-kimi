@@ -9,3 +9,13 @@ PLAN-REVIEW-LOG.md
 # ruflo / claude-flow runtime artifacts
 .claude-flow/
 .swarm/
+
+# Never commit secrets / credentials (defense in depth — none are produced in-repo)
+.env
+.env.*
+*.key
+*.pem
+**/credentials/
+.kimi/
+.kimi-code/
+.kimi-grill/
