@@ -1,6 +1,6 @@
 ---
 name: grill-me-kimi
-description: Two-act planning skill. Act 1 interrogates you one question at a time until the plan is locked. Act 2 hands that plan to Kimi (a rival model) which adversarially tears it apart over several rounds until both models sign off — before a line of code is written. Use when you want a plan stress-tested by you AND a second model. Triggers "grill me kimi", "grill and review", "harden this plan".
+description: Two-act planning skill. Act 1 interrogates you one question at a time until the plan is locked. Act 2 hands that plan to a configured second model (Kimi is one option among several — see docs/PROVIDERS.md) which adversarially tears it apart over several rounds until both models sign off — before a line of code is written. Use when you want a plan stress-tested by you AND a second model. Triggers "grill me kimi", "grill and review", "harden this plan".
 allowed-tools:
   - Bash
   - Read
@@ -21,9 +21,9 @@ it produces** (is the plan actually correct — and how would you, a non-expert,
 know?). The same model that plans the build is a poor judge of its own plan; it's
 an echo chamber. A different provider catches what Claude misses.
 
-**Act 1** grills you to lock the plan. **Act 2** hands that plan to Kimi, a rival
-model running under your own OAuth login, which adversarially reviews it over
-several rounds until both models sign off. Only then do you write code.
+**Act 1** grills you to lock the plan. **Act 2** hands that plan to Kimi (or any
+other second model you configure) which adversarially reviews it over several
+rounds until both models sign off. Only then do you write code.
 
 You gate twice: at kickoff, and at final sign-off. Kimi is read-only the whole time.
 
@@ -58,29 +58,30 @@ short header and the locked plan's date.
 Show the user the locked `PLAN.md` in one or two sentences and confirm they want to
 start the Kimi review. Do not proceed without a yes.
 
-**Thinking mode (Kimi's reasoning depth).** The engine reads `~/.kimi-grill/thinking`
-(`on`/`off`, default `on`). If that file doesn't exist yet, offer a one-time arrow pick —
-**ON** (deeper, slower) vs **OFF** (faster) — and write the chosen word to it. Otherwise
-note the current mode in one line. The user can re-pick anytime by asking;
-`KIMI_NO_THINKING=1` overrides a single run.
+**Reviewer setup.** The engine has no default provider — confirm `KIMI_REVIEW_CMD`
+or `KIMI_REVIEW_BASE_URL`/`_MODEL`/`_API_KEY` is set (see
+[docs/PROVIDERS.md](../../docs/PROVIDERS.md) for recipes, including Kimi via its
+CLI or the Moonshot API). If none is set, the engine aborts naming the three
+generic variables — tell the user and offer the recipe before proceeding.
 
 ### The loop
 
-`MAX_ROUNDS = 5` (override if the user asks). The review engine is bundled with
-this skill at `~/.claude/skills/grill-me-kimi/kimi-review.sh`.
+`MAX_ROUNDS = 3` (override if the user asks, or by exporting `MAX_ROUNDS`). The
+review engine is bundled with this skill at
+`~/.claude/skills/grill-me-kimi/kimi-review.sh`.
 
 For each round `N` from 1:
 
-1. **Run Kimi** (read-only, in the repo root):
+1. **Run the reviewer** (read-only, in the repo root):
 
    ```bash
-   ~/.claude/skills/grill-me-kimi/kimi-review.sh --plan-file PLAN.md --round N --max-rounds 5
+   ~/.claude/skills/grill-me-kimi/kimi-review.sh --plan-file PLAN.md --round N --max-rounds 3
    ```
 
-   Round 1 starts a fresh Kimi session. Rounds ≥ 2 automatically pass `--continue`,
-   so the **same** Kimi session re-reads the revised plan and remembers the concerns
-   it raised. The script prints Kimi's review (numbered concerns + a final
-   `VERDICT:` line) to stdout.
+   Round 1 starts fresh. Whether round ≥ 2 resumes the same session (so the reviewer
+   remembers earlier concerns) depends on the configured `KIMI_REVIEW_CMD` — the
+   Kimi-CLI recipe in docs/PROVIDERS.md passes `--continue` for that. The script
+   prints the review (numbered concerns + a final `VERDICT:` line) to stdout.
 
 2. **Append Kimi's full review** to `PLAN-REVIEW-LOG.md` under a `## Round N — Kimi`
    heading. Never paraphrase it away — the log is the audit trail.
@@ -116,17 +117,15 @@ reads, reviews, and edits the two plan files.
 
 ## Notes
 
-- **Auth / cost:** the script calls the `kimi` CLI, which uses whatever login you
-  set up. If you ran `kimi login` (OAuth), reviews run on that account — no API key,
-  no per-token billing. First-time setup: `brew install kimi-cli && kimi login`.
-- **Read-only safety:** Kimi runs in `--plan` mode scoped to the repo; it cannot
-  modify files. It reads `PLAN.md` and the codebase, nothing more.
-- **Model & creds:** the engine auto-detects your Kimi data dir (`~/.kimi-code` or
-  `~/.kimi`) and uses that config's `default_model` (`kimi-for-coding` on the coding
-  plan) — no `-m` needed. Override with `KIMI_MODEL=...`. Disable thinking with
-  `KIMI_NO_THINKING=1`. See the repo README for the auth details.
-- **If the script errors:** exit 3 = install the CLI, exit 4 = run `kimi login`,
-  exit 124 = timeout (raise `--timeout` or `KIMI_REVIEW_TIMEOUT`).
+- **No default provider.** Configure `KIMI_REVIEW_CMD` (e.g. the `kimi` CLI on
+  your OAuth login) or the generic `KIMI_REVIEW_BASE_URL`/`_MODEL`/`_API_KEY` —
+  see [docs/PROVIDERS.md](../../docs/PROVIDERS.md).
+- **Read-only safety:** the loop driver (`bin/kimi-loop.sh`) hashes `PLAN.md`
+  before round 1 and after every round and aborts if it changed — enforced, not
+  just asked for in the prompt.
+- **If the script errors:** exit 5 = plan file not found, 6 = reviewer command
+  failed or produced no output, 7 = no reviewer configured, 124 = timeout (raise
+  `--timeout` or `KIMI_REVIEW_TIMEOUT`).
 
 Built on Matt Pocock's `grill-me` / `grill-with-docs` skills (MIT) — Act 1 is his.
 The Kimi adversarial review (Act 2) is the addition; it swaps OpenAI Codex for Kimi.

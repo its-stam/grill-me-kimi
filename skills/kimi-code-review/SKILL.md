@@ -1,6 +1,6 @@
 ---
 name: kimi-code-review
-description: A critical second pair of eyes on your code — from a different model. Hands a code diff to Kimi (via your OAuth login, no API key), which adversarially reviews it read-only and returns severity-tagged findings with a verdict. Like a Codex review, but on Kimi. Use when you want an independent model to review uncommitted changes, a branch, or a PR before you merge. Triggers "kimi code review", "review my code with kimi", "second opinion on this diff".
+description: A critical second pair of eyes on your code — from a different model. Hands a code diff to a configured second model (Kimi is one option among several — see docs/PROVIDERS.md), which adversarially reviews it read-only and returns severity-tagged findings with a verdict. Like a Codex review, but on a model of your choice. Use when you want an independent model to review uncommitted changes, a branch, or a PR before you merge. Triggers "kimi code review", "review my code with kimi", "second opinion on this diff".
 allowed-tools:
   - Bash
   - Read
@@ -18,8 +18,9 @@ an echo chamber; Kimi is a different provider, so it catches what Claude misses.
 reviews your diff read-only and returns numbered findings (`[BLOCKER]`/`[MAJOR]`/
 `[MINOR]`) ending in `VERDICT: APPROVED` or `VERDICT: CHANGES_REQUESTED`.
 
-Runs on your Kimi **OAuth subscription** — no API key. Same engine as the rest of the
-family (`kimi-review.sh`, here in `~/.claude/skills/kimi-code-review/`), in code mode.
+Runs on whatever second model you've configured — Kimi via OAuth, an API key, or
+any other OpenAI-compatible provider. Same engine as the rest of the family
+(`kimi-review.sh`, here in `~/.claude/skills/kimi-code-review/`), in code mode.
 
 ---
 
@@ -47,10 +48,10 @@ tell the user and offer to review per-area (split by path) instead of all at onc
 Tell the user what you're about to review (e.g. "12 files, ~300 lines, on top of
 `main`") and confirm. Start a `CODE-REVIEW-LOG.md` for the audit trail.
 
-**Thinking mode.** The engine reads `~/.kimi-grill/thinking` (`on`/`off`, default `on`).
-If the file doesn't exist yet, offer a one-time pick — **ON** (deeper, slower) vs **OFF**
-(faster) — and write the word to it. Otherwise note the current mode. `KIMI_NO_THINKING=1`
-overrides one run.
+**Reviewer setup.** No default provider is configured. Confirm `KIMI_REVIEW_CMD`
+or `KIMI_REVIEW_BASE_URL`/`_MODEL`/`_API_KEY` is set — see
+[docs/PROVIDERS.md](../../docs/PROVIDERS.md). Unset, the engine aborts naming the
+three generic variables; surface that before proceeding.
 
 ## Step 3 — run the review
 
@@ -59,8 +60,9 @@ overrides one run.
   --mode code --diff-file /tmp/kimi-review.diff --repo "$(git rev-parse --show-toplevel)" --round 1
 ```
 
-Kimi reads the diff plus the full files in the repo (read-only) and prints findings +
-a `VERDICT:` line. Append its full output to `CODE-REVIEW-LOG.md` under `## Round 1 — Kimi`.
+The reviewer reads the diff plus the full files in the repo (read-only) and prints
+findings + a `VERDICT:` line. Append its full output to `CODE-REVIEW-LOG.md` under
+`## Round 1 — Kimi`.
 
 ## Step 4 — triage the findings
 
@@ -76,8 +78,9 @@ only touch plan files). Make each fix deliberately, not in bulk.
 
 ## Step 5 (optional) — re-review after fixes
 
-If you changed code in response, regenerate the diff and run round 2 — the same Kimi
-session remembers its findings and checks whether they're addressed:
+If you changed code in response, regenerate the diff and run round 2 — whether the
+same reviewer session remembers its findings depends on the configured
+`KIMI_REVIEW_CMD` (the Kimi-CLI recipe in docs/PROVIDERS.md passes `--continue`):
 
 ```bash
 git diff HEAD > /tmp/kimi-review.diff
@@ -86,18 +89,19 @@ git diff HEAD > /tmp/kimi-review.diff
 ```
 
 Append to the log. Stop on `VERDICT: APPROVED`, when the user is satisfied, or at
-`--max-rounds` (default 5).
+`--max-rounds` (default 3).
 
 ---
 
 ## Notes
 
-- **A different model on purpose.** If Claude wrote the code, a Kimi review is the
-  point. For a Claude-side review of the diff, use `/code-review` instead.
-- **Read-only:** Kimi runs in `--plan` mode scoped to the repo; it cannot modify
-  files. Any fixes are made by you/Claude, not Kimi.
-- **Auth / model / fallback:** identical to the rest of the family — OAuth first (no
-  API key), optional API fallback if a key is set. See the repo README and
-  `docs/PROVIDERS.md` (e.g. review with DeepSeek or a local Ollama model instead).
-- **Errors:** exit 3 = install `kimi`, 4 = `kimi login`, 5 = diff file missing/empty,
-  6 = no review produced (re-login), 124 = timeout.
+- **A different model on purpose.** If Claude wrote the code, a review from
+  elsewhere is the point. For a Claude-side review of the diff, use `/code-review`
+  instead.
+- **Read-only by prompt instruction** in this skill (it reviews a diff, not a
+  tracked file, so there's nothing to hash-check the way the plan-review skills
+  do). Any fixes are made by you/Claude, not the reviewer.
+- **No default provider.** See [docs/PROVIDERS.md](../../docs/PROVIDERS.md) —
+  recipes for Kimi (CLI or API), DeepSeek, Qwen, Ollama, and others.
+- **Errors:** exit 5 = diff file missing/empty, 6 = reviewer command failed or
+  produced no output, 7 = no reviewer configured, 124 = timeout.

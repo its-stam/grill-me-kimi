@@ -1,150 +1,160 @@
-# Using a different model or provider
+# Which second model
 
-Act 2 runs through the **Kimi Code CLI** (`kimi`), but `kimi` is really a generic
-agent harness: it can drive many model providers, not just Kimi. So you can keep the
-exact same review loop (read-only `--plan` mode, `--continue` session memory, the
-`VERDICT:` contract) while swapping the *brain* for DeepSeek, Qwen, a local Ollama
-model, the Moonshot API, Claude, or Gemini.
+There is no default provider. The engine (`bin/kimi-review.sh`) is configured with
+one of two things, checked in this order:
 
-**For any OpenAI-compatible model, no code change is needed.** You add a provider +
-model to your kimi config and select it with `KIMI_MODEL`. The engine
-(`bin/kimi-review.sh`) copies your config through untouched (it only strips one
-incompatible capability flag), so a model you configure there is available to the
-skill.
+1. **`KIMI_REVIEW_CMD`** — any command. It reads the prompt from the file named in
+   `$GRILL_REVIEW_PROMPT_FILE` (also exported: `$GRILL_REVIEW_ROUND`,
+   `$GRILL_REVIEW_MAX_ROUNDS`, `$GRILL_REVIEW_MODE`, `$GRILL_REVIEW_PLAN_FILE`,
+   `$GRILL_REVIEW_REPO_DIR`) and prints the review to stdout. This is how you wire
+   up the `kimi` CLI, `codex`, a local script, or a test double — see the Kimi
+   recipe below and `tests/mock-reviewer.sh` for a worked example.
+2. **`KIMI_REVIEW_BASE_URL`, `KIMI_REVIEW_MODEL`, `KIMI_REVIEW_API_KEY`** — a
+   generic OpenAI-compatible Chat Completions endpoint (base URL + model name +
+   key), called in-process with Python's standard library. No CLI, no config file,
+   no new dependency.
 
-> Secrets rule: an API key for one of these providers is a secret. Put it in an
-> **environment variable** or in your kimi config **in your home directory**
-> (`~/.kimi-code/config.toml`) — never in this repo. Nothing in this repo contains a
+Set neither, and the engine aborts naming exactly these three variables (the
+Kimi-CLI route above is a `KIMI_REVIEW_CMD`, not a third alternative, so it's not
+named in that message).
+
+**Kimi is one documented option among several**, not the hardcoded reviewer. Its
+availability depends on your own OAuth login or API key, same as any other
+provider here.
+
+> Secrets rule: an API key for any of these is a secret. Put it in an
+> **environment variable**, never in this repo. Nothing in this repo contains a
 > key, and it should stay that way.
 
 ---
 
-## How model selection works
-
-kimi reads two tables from its config (`~/.kimi-code/config.toml`, or `~/.kimi/config.toml`):
-
-```toml
-[providers.<provider-name>]
-type = "openai_legacy"            # see the type table below
-base_url = "https://api.example.com/v1"
-api_key = ""                       # leave empty and pass via env, or set here (home dir only)
-
-[models.<model-alias>]
-provider = "<provider-name>"
-model = "<the provider's model id>"
-max_context_size = 131072
-```
-
-Then pick that model alias:
+## Recipe: Kimi, via the CLI (OAuth or API key)
 
 ```bash
-KIMI_MODEL=<model-alias> ~/.claude/skills/kimi-review/kimi-review.sh --plan-file PLAN.md --round 1
+kimi login   # one-time OAuth device flow — no key needed after this
 ```
 
-`KIMI_MODEL` overrides the config's `default_model` for that one run. Leave it unset
-to use whatever `default_model` is (Kimi's `kimi-for-coding` on the OAuth plan).
+```bash
+export KIMI_REVIEW_CMD='kimi --output-format text -p "$(cat "$GRILL_REVIEW_PROMPT_FILE")"'
+~/.claude/skills/kimi-review/kimi-review.sh --plan-file PLAN.md --round 1
+```
 
-### Provider `type` values (from kimi-cli)
+For round `N >= 2`, add `--continue` so the same session remembers its earlier
+concerns:
 
-| `type` | Use for |
-|---|---|
-| `kimi` | Kimi native (OAuth subscription or Moonshot API key) |
-| `openai_legacy` | Any OpenAI-compatible Chat Completions API — DeepSeek, Qwen/DashScope, Ollama, Moonshot, OpenRouter, vLLM |
-| `openai_responses` | OpenAI Responses API |
-| `anthropic` | Claude |
-| `google_genai` / `gemini` | Gemini |
-| `vertexai` | Gemini on Vertex AI |
+```bash
+export KIMI_REVIEW_CMD='kimi --output-format text $( [ "$GRILL_REVIEW_ROUND" -ge 2 ] && echo --continue ) -p "$(cat "$GRILL_REVIEW_PROMPT_FILE")"'
+```
 
-`openai_legacy` also reads a `reasoning_key` (default `reasoning_content`) — which is
-exactly the field DeepSeek's reasoner returns, so reasoning models work out of the box.
+Pin a model with `-m <alias>` inside the command, or leave it out to use the
+config's `default_model`. `bin/kimi-loop.sh` calls the engine the same way each
+round, so the same `KIMI_REVIEW_CMD` works there too.
+
+Verified against the installed `kimi` 0.33.0 (`kimi --help`): `-p`/`--prompt`,
+`--output-format`, `-m`/`--model`, `-c`/`--continue` all exist as used above.
+`--plan` also still exists, but `kimi --plan -p "..."` errors with `Cannot
+combine --prompt with --plan.` — that's why this recipe doesn't use it; read-only
+is enforced by the prompt instruction plus `bin/kimi-loop.sh`'s hash check
+instead (see "The only contract that matters" below), not by a CLI sandbox mode.
+
+### Authentication — login, and re-login when it expires
+
+The `kimi` CLI in the recipe above uses whatever account you logged into with
+`kimi login` — OAuth device flow, no API key, no secret stored in this repo.
+The short-lived access token (~15 min) refreshes silently via a longer-lived
+refresh token; only when that itself expires (days/weeks) does a review start
+failing (`kimi` then errors instead of returning a review, and the engine's exit
+6 covers that — see "The only contract that matters" below). Re-run
+`kimi login` and it picks the new token straight back up.
+
+**Dropped:** the engine no longer auto-detects the Kimi data dir
+(`~/.kimi`/`~/.kimi-code` via `KIMI_SHARE_DIR`) or sanitizes `config.toml` for an
+older CLI build (writing to `~/.kimi-grill/config.toml`, passed via
+`--config-file`). Both were workarounds for a specific `kimi` CLI version; the
+engine doesn't invoke `kimi` at all anymore, `KIMI_REVIEW_CMD` does, so any such
+CLI-version quirk is now the recipe's problem to solve (e.g. by pointing
+`KIMI_SHARE_DIR` inside your own `KIMI_REVIEW_CMD` string), not the engine's.
+
+### API fallback (OAuth stays primary)
+
+**Dropped.** Earlier versions tried the OAuth path first and, only if that
+produced no review, automatically retried once via an API key
+(`GRILL_KIMI_API_KEY`/`MOONSHOT_API_KEY`/`KIMI_API_KEY`, default
+`https://api.moonshot.ai/v1`). The engine now resolves exactly one reviewer per
+run (`KIMI_REVIEW_CMD`, else the three generic variables, else abort) — no
+two-step try-then-fall-back inside a single call. Want the same effect? Put the
+fallback logic in your own `KIMI_REVIEW_CMD` script, or use the Moonshot API
+recipe below directly instead of the OAuth one.
+
+### Thinking mode (Kimi's reasoning depth)
+
+**Dropped.** `kimi --help` (0.33.0) has no `--thinking` flag — it was removed
+from the CLI (this repo used to also persist a picked on/off state to
+`~/.kimi-grill/thinking`, honored via `KIMI_NO_THINKING`). If a future `kimi`
+version re-adds reasoning-depth control, set it inside your `KIMI_REVIEW_CMD`
+string the same way you'd set `-m`.
+
+## Recipe: Kimi, via the Moonshot API (no CLI, no OAuth)
+
+Moonshot's API is OpenAI-compatible, so this needs no `KIMI_REVIEW_CMD` at all —
+just the three generic variables:
+
+```bash
+export KIMI_REVIEW_BASE_URL="https://api.moonshot.ai/v1"
+export KIMI_REVIEW_MODEL="kimi-k2.7"          # check current model ids in Moonshot's docs
+export KIMI_REVIEW_API_KEY="$MOONSHOT_API_KEY"
+~/.claude/skills/kimi-review/kimi-review.sh --plan-file PLAN.md --round 1
+```
+
+## Use a different model (DeepSeek, Qwen, Ollama, ...)
+
+Any OpenAI-compatible endpoint works with the same three generic variables — no
+code change, no per-provider recipe needed beyond the base URL, model id, and
+key.
+
+### Recipe: DeepSeek
+
+```bash
+export KIMI_REVIEW_BASE_URL="https://api.deepseek.com/v1"
+export KIMI_REVIEW_MODEL="deepseek-reasoner"   # or deepseek-chat
+export KIMI_REVIEW_API_KEY="$DEEPSEEK_API_KEY"
+```
+
+### Recipe: Qwen (Alibaba DashScope, OpenAI-compatible)
+
+```bash
+export KIMI_REVIEW_BASE_URL="https://dashscope-intl.aliyuncs.com/compatible-mode/v1"   # .cn for China
+export KIMI_REVIEW_MODEL="qwen-max"            # or qwen-plus, qwen3-coder-plus, ...
+export KIMI_REVIEW_API_KEY="$DASHSCOPE_API_KEY"
+```
+
+### Recipe: local model via Ollama (free, offline)
+
+```bash
+export KIMI_REVIEW_BASE_URL="http://localhost:11434/v1"
+export KIMI_REVIEW_MODEL="qwen2.5-coder:14b"   # whatever you've pulled
+export KIMI_REVIEW_API_KEY="ollama"            # any non-empty dummy
+```
+
+## Claude or Gemini as the reviewer
+
+Possible — Gemini's OpenAI-compatible endpoint works with the generic variables
+above; Claude needs a `KIMI_REVIEW_CMD` wrapping a small script (the Messages API
+isn't Chat-Completions-shaped). But note the whole point of this review is a
+*different* provider than the one that wrote the plan. If Claude wrote the plan,
+reviewing with Claude is the echo chamber this exists to avoid. Prefer a
+non-Claude reviewer.
 
 ---
 
-## Recipes
+## The only contract that matters
 
-Model IDs change over time — confirm the current ones in each provider's docs. The
-endpoints and the shape are what matter.
+Whatever you configure, the reviewer command or endpoint must:
 
-### DeepSeek
+1. Read the prompt (from `$GRILL_REVIEW_PROMPT_FILE` for `KIMI_REVIEW_CMD`) and the
+   repo **read-only**, and print its review to stdout.
+2. End with a single line: `VERDICT: APPROVED` or `VERDICT: CHANGES_REQUESTED`.
 
-```toml
-[providers.deepseek]
-type = "openai_legacy"
-base_url = "https://api.deepseek.com/v1"
-api_key = ""                       # or export OPENAI_API_KEY / DEEPSEEK_API_KEY
-
-[models.deepseek-reasoner]
-provider = "deepseek"
-model = "deepseek-reasoner"        # or "deepseek-chat"
-max_context_size = 65536
-```
-```bash
-OPENAI_API_KEY="$DEEPSEEK_API_KEY" KIMI_MODEL=deepseek-reasoner \
-  ~/.claude/skills/kimi-review/kimi-review.sh --plan-file PLAN.md --round 1
-```
-
-### Qwen (Alibaba DashScope, OpenAI-compatible)
-
-```toml
-[providers.qwen]
-type = "openai_legacy"
-base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"   # .cn for China
-api_key = ""                       # or export OPENAI_API_KEY / DASHSCOPE_API_KEY
-
-[models.qwen-max]
-provider = "qwen"
-model = "qwen-max"                 # or qwen-plus, qwen3-coder-plus, ...
-max_context_size = 131072
-```
-
-### Local model via Ollama (free, offline)
-
-```toml
-[providers.ollama]
-type = "openai_legacy"
-base_url = "http://localhost:11434/v1"
-api_key = "ollama"                 # any non-empty dummy
-
-[models.local-qwen]
-provider = "ollama"
-model = "qwen2.5-coder:14b"        # whatever you've pulled
-max_context_size = 32768
-```
-
-### Moonshot API (instead of the OAuth subscription)
-
-If you'd rather use a Moonshot API key than the OAuth login:
-
-```toml
-[providers.moonshot]
-type = "openai_legacy"
-base_url = "https://api.moonshot.ai/v1"
-api_key = ""                       # or export OPENAI_API_KEY / MOONSHOT_API_KEY
-
-[models.kimi-k2]
-provider = "moonshot"
-model = "kimi-k2.6"
-max_context_size = 262144
-```
-
-### Claude or Gemini as the reviewer
-
-Possible (`type = "anthropic"` with `base_url = "https://api.anthropic.com"`, or
-`type = "gemini"`), but note the whole point of Act 2 is a *different* provider than
-the one that wrote the plan. If Claude wrote the plan, reviewing with Claude is the
-echo chamber this skill exists to avoid. Prefer a non-Claude reviewer.
-
----
-
-## Swapping the harness entirely
-
-If you want to drop `kimi` and drive a completely different CLI (e.g. `codex`, or a
-raw `curl` to an API), there is exactly **one** place to change: the `KIMI_CMD`
-assembly near the end of `bin/kimi-review.sh`. It builds the argv that runs the
-review and prints the result to stdout. Keep two contracts and the skills keep working:
-
-1. The command reads `PLAN.md` and the repo **read-only** and prints its review to stdout.
-2. The review ends with a single line: `VERDICT: APPROVED` or `VERDICT: CHANGES_REQUESTED`.
-
-Re-run `./install.sh` after editing so the installed copies under
-`~/.claude/skills/*/` pick up your change.
+`bin/kimi-loop.sh` enforces read-only itself — it hashes the reviewed file before
+round 1 and after every round, and aborts if it changed — so a reviewer that
+ignores the "don't write" instruction is caught, not just asked nicely.

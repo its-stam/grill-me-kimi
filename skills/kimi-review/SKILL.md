@@ -1,6 +1,6 @@
 ---
 name: kimi-review
-description: Act 2 only — you already have a plan. Hands a written plan to Kimi, a rival model running under your OAuth login, which adversarially reviews it read-only over several rounds until APPROVED or a round cap. Use when you have a PLAN.md (or any plan/spec/design doc) and want an independent second model to tear it apart before you build. Triggers "kimi review", "review my plan with kimi", "second opinion on this plan".
+description: Act 2 only — you already have a plan. Hands a written plan to a configured second model (Kimi is one option among several — see docs/PROVIDERS.md) which adversarially reviews it read-only over several rounds until APPROVED or a round cap. Use when you have a PLAN.md (or any plan/spec/design doc) and want an independent second model to tear it apart before you build. Triggers "kimi review", "review my plan with kimi", "second opinion on this plan".
 allowed-tools:
   - Bash
   - Read
@@ -32,27 +32,28 @@ one first. Start (or append to) `PLAN-REVIEW-LOG.md` for the audit trail.
 
 ## Gate 1 — kickoff
 
-Confirm the user wants to start the Kimi review of `<plan-file>`. No yes, no proceed.
+Confirm the user wants to start the review of `<plan-file>`. No yes, no proceed.
 
-**Thinking mode.** The engine reads `~/.kimi-grill/thinking` (`on`/`off`, default `on`).
-If the file doesn't exist yet, offer a one-time pick — **ON** (deeper, slower) vs **OFF**
-(faster) — and write the word to it. Otherwise note the current mode. `KIMI_NO_THINKING=1`
-overrides one run.
+**Reviewer setup.** No default provider is configured. Confirm `KIMI_REVIEW_CMD`
+or `KIMI_REVIEW_BASE_URL`/`_MODEL`/`_API_KEY` is set — see
+[docs/PROVIDERS.md](../../docs/PROVIDERS.md) for recipes (Kimi via its CLI or the
+Moonshot API, DeepSeek, Qwen, Ollama, ...). Unset, the engine aborts naming the
+three generic variables; surface that to the user before proceeding.
 
 ## The loop
 
-`MAX_ROUNDS = 5` (override on request). Engine bundled at
-`~/.claude/skills/kimi-review/kimi-review.sh`.
+`MAX_ROUNDS = 3` (override on request, or `MAX_ROUNDS=N` in the environment).
+Engine bundled at `~/.claude/skills/kimi-review/kimi-review.sh`.
 
 For each round `N` from 1:
 
-1. **Run Kimi** (read-only, repo root):
+1. **Run the reviewer** (read-only, repo root):
    ```bash
-   ~/.claude/skills/kimi-review/kimi-review.sh --plan-file PLAN.md --round N --max-rounds 5
+   ~/.claude/skills/kimi-review/kimi-review.sh --plan-file PLAN.md --round N --max-rounds 3
    ```
-   Round 1 is fresh; rounds ≥ 2 auto-pass `--continue` so the same Kimi session
-   re-reads the revised plan and remembers its prior concerns. Stdout = numbered
-   concerns + a final `VERDICT:` line.
+   Round 1 is fresh; whether round ≥ 2 resumes the same session depends on the
+   configured `KIMI_REVIEW_CMD` (the Kimi-CLI recipe passes `--continue`). Stdout =
+   numbered concerns + a final `VERDICT:` line.
 2. **Append** Kimi's full review to `PLAN-REVIEW-LOG.md` under `## Round N — Kimi`.
 3. **Read the verdict:** `VERDICT: APPROVED` → Gate 2. `VERDICT: CHANGES_REQUESTED` → continue.
 4. **Respond to each concern.** Fix the plan file if Kimi is right; rebut in the log
@@ -76,11 +77,11 @@ file + the log — never code.
 
 ## Notes
 
-- **Auth / cost:** the engine calls the `kimi` CLI; your `kimi login` (OAuth) account
-  is used — no API key, no per-token billing. Setup: `brew install kimi-cli && kimi login`.
-- **Read-only:** Kimi runs in `--plan` mode scoped to the repo; it cannot write.
-- **Model:** plan default; override `KIMI_MODEL=...`, disable thinking `KIMI_NO_THINKING=1`.
-- **Errors:** exit 3 = install CLI, 4 = `kimi login`, 5 = plan file not found, 124 = timeout.
+- **No default provider.** See [docs/PROVIDERS.md](../../docs/PROVIDERS.md).
+- **Read-only:** enforced by `bin/kimi-loop.sh`, which hashes the plan file before
+  round 1 and after every round and aborts on a mismatch.
+- **Errors:** exit 5 = plan file not found, 6 = reviewer command failed or produced
+  no output, 7 = no reviewer configured, 124 = timeout.
 
 Part of the grill-me-kimi family. Built on the idea behind Matt Pocock's grill
 skills (MIT); swaps OpenAI Codex for Kimi as the second model.

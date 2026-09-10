@@ -78,24 +78,25 @@ Identical to `grill-me-kimi`. The bundled engine is at
 `~/.claude/skills/grill-with-docs-kimi/kimi-review.sh`.
 
 ### Gate 1 — kickoff
-Show the locked `PLAN.md` briefly; confirm the user wants the Kimi review. No yes, no proceed.
+Show the locked `PLAN.md` briefly; confirm the user wants the review. No yes, no proceed.
 
-**Thinking mode.** The engine reads `~/.kimi-grill/thinking` (`on`/`off`, default `on`).
-If the file doesn't exist yet, offer a one-time pick — **ON** (deeper, slower) vs **OFF**
-(faster) — and write the word to it. Otherwise note the current mode. `KIMI_NO_THINKING=1`
-overrides one run.
+**Reviewer setup.** No default provider is configured. Confirm `KIMI_REVIEW_CMD`
+or `KIMI_REVIEW_BASE_URL`/`_MODEL`/`_API_KEY` is set — see
+[docs/PROVIDERS.md](../../docs/PROVIDERS.md). Unset, the engine aborts naming the
+three generic variables; surface that before proceeding.
 
-### The loop (`MAX_ROUNDS = 5`)
+### The loop (`MAX_ROUNDS = 3`, override with `MAX_ROUNDS=N`)
 For each round `N` from 1:
 
-1. Run Kimi (read-only, repo root):
+1. Run the reviewer (read-only, repo root):
    ```bash
-   ~/.claude/skills/grill-with-docs-kimi/kimi-review.sh --plan-file PLAN.md --round N --max-rounds 5
+   ~/.claude/skills/grill-with-docs-kimi/kimi-review.sh --plan-file PLAN.md --round N --max-rounds 3
    ```
-   Round 1 is a fresh session; rounds ≥ 2 pass `--continue` so the same Kimi session
-   remembers its concerns and checks the revision. Stdout = numbered concerns + a
-   final `VERDICT:` line. Tell Kimi to challenge the plan against `CONTEXT.md` too —
-   the engine prompt covers codebase contradictions; the glossary is part of that.
+   Round 1 is a fresh session; whether round ≥ 2 resumes it depends on the
+   configured `KIMI_REVIEW_CMD` (the Kimi-CLI recipe passes `--continue`). Stdout =
+   numbered concerns + a final `VERDICT:` line. Tell the reviewer to challenge the
+   plan against `CONTEXT.md` too — the engine prompt covers codebase
+   contradictions; the glossary is part of that.
 2. Append Kimi's full review to `PLAN-REVIEW-LOG.md` under `## Round N — Kimi`.
 3. Read the verdict: `APPROVED` → Gate 2; `CHANGES_REQUESTED` → continue.
 4. For each concern: fix `PLAN.md` if Kimi is right, or rebut in the log with
@@ -115,10 +116,9 @@ plan + docs files — never code.
 
 ## Notes
 
-- **Auth / cost:** the engine calls the `kimi` CLI; your `kimi login` (OAuth) account
-  is used — no API key, no per-token billing. Setup: `brew install kimi-cli && kimi login`.
-- **Read-only:** Kimi runs in `--plan` mode scoped to the repo; it cannot write.
-- **Model:** plan default; override `KIMI_MODEL=...`, disable thinking `KIMI_NO_THINKING=1`.
+- **No default provider.** See [docs/PROVIDERS.md](../../docs/PROVIDERS.md).
+- **Read-only:** enforced by `bin/kimi-loop.sh`, which hashes the plan file before
+  round 1 and after every round and aborts on a mismatch.
 
-Built on Matt Pocock's `grill-with-docs` skill (MIT) — Act 1 is his. The Kimi
-adversarial review (Act 2) is the addition; it swaps OpenAI Codex for Kimi.
+Built on Matt Pocock's `grill-with-docs` skill (MIT) — Act 1 is his. The
+adversarial review (Act 2) is the addition, ported from the OpenAI Codex original.
