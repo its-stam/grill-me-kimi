@@ -4,6 +4,8 @@ Two AI models harden your plan before you write a line of code: one grills you
 until the plan is locked, the second tears it apart read-only, round after round,
 until it signs off or you hit the round cap and decide yourself.
 
+![A full loop against the mock reviewer: two rounds with a blocker, approval in round three, the log written round by round](docs/screenshots/review-loop.png)
+
 ## Results (from `./test.sh`)
 
 | Check | Result |
